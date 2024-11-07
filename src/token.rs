@@ -3,6 +3,9 @@ use serde::{Serialize, Deserialize};
 
 use chrono::prelude::*;
 use sqlx::MySqlPool;
+use rand::{distributions::Alphanumeric, Rng};
+use sha2::{Sha512, Digest};
+use tracing::debug;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Credentials {
@@ -10,42 +13,67 @@ pub struct Credentials {
     pub password: String
 }
 
+#[derive(Debug, Clone)]
 pub enum CredentialsError {
     AlreadyExists
 }
 
 impl Credentials {
     pub fn new(email: String, password: String) -> Self {
-        Self { email ,password }
+        Self { email, password }
     }
 
-    pub async fn register(&self, db: MySqlPool) -> Result<(), CredentialsError> {
-        let result = sqlx::query!("select exists(select * from Users where email = ?) as found", &self.email)
-            .fetch_one(&db)
-            .await;
+    pub async fn register(&self, db: &MySqlPool) -> Result<(), CredentialsError> {
+        let result = self.get_user(db).await;
 
         match result {
-            Err(e) => panic!("Unknown error! {}", e),
-            Ok(res) => if res.found == 1 { return Err(CredentialsError::AlreadyExists) }
+            Ok(res) => if res.is_some() { return Err(CredentialsError::AlreadyExists) },
+            Err(e) => panic!("Unknown error! {}", e)
         }
+        
 
+        let salt = generate_salt();
+        let password_digest = self.get_password_digest(&salt);
 
-        sqlx::query!("INSERT INTO Users(email, password_digest, salt) VALUES (?, ?, ?)", &self.email, &self.password, "")
-            .execute(&db)
+        sqlx::query!(
+            "INSERT INTO Users(email, password_digest, salt) VALUES (?, ?, ?)", 
+            &self.email, &password_digest, &salt
+            )
+            .execute(db)
             .await
             .unwrap();
 
         Ok(())
     }
 
-    pub async fn check(&self, db: MySqlPool) -> Result<i64, ()> {
-        let result: (i64,) = sqlx::query_as("select 1")
-            .fetch_one(&db)
-            .await
-            .unwrap();
-        Ok(result.0)
+    pub fn get_password_digest(&self, salt: &str) -> String {
+        let password_with_salt = format!("{}{}", self.password, salt);
 
+        let mut hasher = Sha512::new();
+        hasher.update(password_with_salt.as_bytes());
+        let digest = hasher.finalize();
+        let password_digest = format!("{:X}", digest);
+
+        password_digest
     }
+
+    pub async fn get_user(&self, db: &MySqlPool) -> Result<Option<Credentials>, sqlx::Error> {
+        sqlx::query_as!(
+            Credentials,
+            "SELECT email, password_digest as password FROM Users WHERE email = ?", 
+            &self.email
+            )
+            .fetch_optional(db)
+            .await
+    }
+}
+
+fn generate_salt() -> String {
+    rand::thread_rng()
+        .sample_iter(&Alphanumeric)
+        .take(9)
+        .map(char::from)
+        .collect()
 }
 
 pub struct TokenGenerator {

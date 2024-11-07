@@ -4,8 +4,8 @@ USE authdb;
 
 CREATE TABLE Users (
 	id int NOT NULL AUTO_INCREMENT,
-	email VARCHAR(20),
-	password_digest VARCHAR(255),
-	salt VARCHAR(20),
+	email VARCHAR(20) NOT NULL,
+	password_digest VARCHAR(255) NOT NULL,
+	salt VARCHAR(20) NOT NULL,
 	PRIMARY KEY (id)
 );

@@ -1,5 +1,3 @@
-
-
 #[test]
 fn test_token_creation() {
     use crate::token::*;
@@ -43,6 +41,6 @@ async fn test_register_user() {
     let password = "secretpassword123!".to_string();
     let credentials = Credentials::new(email.clone(), password);
 
-    let res = credentials.register(pool).await;
+    let res = credentials.register(&pool).await;
     assert!(true);
 }
