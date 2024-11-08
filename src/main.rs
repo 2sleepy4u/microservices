@@ -1,40 +1,33 @@
 use std::sync::Arc;
-use serde::{Serialize, Deserialize};
+
 use axum::{
-    Json,
-    extract::{Request, State},
     routing::{get, post},
-    Router, http::{header, StatusCode}
-};
-use sqlx::{mysql::MySqlPoolOptions, MySqlPool};
+    Router, http::{header::CONTENT_TYPE, Method}, middleware};
+use sqlx::mysql::MySqlPoolOptions;
+use tower::ServiceBuilder;
+use tower_http::cors::{Any, CorsLayer};
+use tower_http::trace::TraceLayer;
+use tracing::info;
+use tracing_subscriber::prelude::*;
+use utoipa::OpenApi;
 
 mod test;
 mod token;
+mod routes;
+mod state;
+
 use token::*;
-use tracing::{info, warn, error};
-use tracing_subscriber::prelude::__tracing_subscriber_SubscriberExt;
+use state::*;
+use routes::ApiDoc;
 
-const DEFAULT_TOKEN_DURATION_HOURS: usize = 1;
-const DEFAULT_IP: &str = "0.0.0.0";
-const DEFAULT_PORT: u16 = 3000;
-
-#[derive(Serialize, Deserialize)]
-struct Config {
-    ip: String,
-    port: u16,
-    token_duration: u32,
-    db_string: String
-}
-
-struct ServiceState {
-    config: Config,
-    token_generator: TokenGenerator,
-    pool: MySqlPool
-}
 
 
 #[tokio::main]
 async fn main() {
+    #[cfg(debug_assertions)]
+    std::fs::write("./api-docs/open-api.json", ApiDoc::openapi().to_pretty_json().unwrap()).unwrap();
+
+    //log file
     let debug_file = std::fs::OpenOptions::new()
         .append(true)
         .create(true)
@@ -57,40 +50,58 @@ async fn main() {
     
     tracing::subscriber::set_global_default(subscriber).unwrap();
     
+    //load dotenv file
     dotenv::dotenv().ok();
 
-    let db_string = std::env::var("DATABASE_URL").expect("Connection string not found");
-    let ip = std::env::var("IP").unwrap_or(DEFAULT_IP.to_string());
-    let token_duration = std::env::var("TOKEN_DURATION").unwrap_or(DEFAULT_TOKEN_DURATION_HOURS.to_string()).parse::<u32>().unwrap();
-    let port = std::env::var("PORT").unwrap_or(DEFAULT_PORT.to_string()).parse::<u16>().unwrap();
+    //load config from env
+    let config: Config = Config::load_from_env();
 
-
-    let pub_key = std::fs::read_to_string("keys/pubkey.pem").unwrap();
-    let priv_key = std::fs::read_to_string("keys/privkey.pem").unwrap();
+    let address = format!("{}:{}", config.ip, config.port);
+    let pub_key = std::fs::read_to_string("keys/pubkey.pem")
+        .expect("Error loading public key file");
+    let priv_key = std::fs::read_to_string("keys/privkey.pem")
+        .expect("Error loading public key file");
 
     let pub_key = pub_key.as_bytes();
     let priv_key = priv_key.as_bytes();
 
-    let url = db_string.clone();
+    let url = config.db_string.clone();
+
     let pool = MySqlPoolOptions::new()
         .max_connections(10)
         .connect(&url)
         .await
         .expect("Unable to connect to db");
 
-    let address = format!("{}:{}", ip, port);
 
-    let config: Config = Config { ip, port, token_duration, db_string };
+    //initialize service shared state
+    //Initialize the token generator once so it stores the keys, reducing performance overhead
     let token_generator = TokenGenerator::new(pub_key, priv_key).unwrap();
-
     let state = Arc::new(ServiceState { config, token_generator, pool });
 
     let app = Router::new()
-        .route("/", get(ping))
-        .route("/verify", post(verify))
-        .route("/login", post(login))
-        .route("/register", post(register))
-        .with_state(state);
+        .route("/register", post(routes::register))
+        //protects above endpoints with token login
+        .layer(middleware::from_fn_with_state(state.clone(), routes::is_auth))
+              .route("/ping", get(routes::ping))
+        .route("/verify", post(routes::verify))
+        .route("/login", post(routes::login))
+        .with_state(state)
+        .layer(ServiceBuilder::new()
+               //logs all the http traffic
+               .layer(TraceLayer::new_for_http())
+               //handle CORS requests
+               .layer(CorsLayer::new()
+                      .allow_methods([Method::GET, Method::POST])
+                      .allow_origin(Any)
+                      .allow_headers([CONTENT_TYPE])
+                     )
+          );
+
+    #[cfg(debug_assertions)]
+    let app = app.merge(utoipa_swagger_ui::SwaggerUi::new("/swagger-ui")
+                        .url("/api-docs/openapi.json", ApiDoc::openapi()));
+
 
     let listener = tokio::net::TcpListener::bind(&address)
         .await
@@ -101,58 +112,4 @@ async fn main() {
     axum::serve(listener, app)
         .await
         .expect("Error while starting application");
-}
-
-
-async fn register(
-    state: State<Arc<ServiceState>>,
-    Json(credentials): Json<Credentials>
-) -> Result<(), StatusCode> 
-{
-    if let Err(e) = credentials.register(&state.pool).await {
-        warn!("{:?}", e);
-        return Err(StatusCode::INTERNAL_SERVER_ERROR);
-    }
-
-    Ok(())
-}
-
-async fn login(
-    state: State<Arc<ServiceState>>,
-    Json(credentials): Json<Credentials>
-) -> Result<String, StatusCode> 
-{
-    match credentials.get_user(&state.pool).await {
-        Ok(res) if res.is_some() => {
-            return state.token_generator.token(credentials.email, state.config.token_duration)
-                .or(Err(StatusCode::INTERNAL_SERVER_ERROR));
-        },
-        Ok(_)=> return Err(StatusCode::INTERNAL_SERVER_ERROR),
-        Err(e) => {
-            error!("{}", e);
-            return Err(StatusCode::INTERNAL_SERVER_ERROR);
-        }
-    }
-}
-
-async fn ping() -> String {
-    "pong".to_string()
-}
-
-async fn verify(
-    state: State<Arc<ServiceState>>,
-    req: Request
-) -> Result<(), StatusCode> 
-{
-    let auth_header = req.headers()
-        .get(header::AUTHORIZATION)
-        .and_then(|header| header.to_str().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
-
-    if let Err(e) = state.token_generator.verify(auth_header) {
-        warn!("{:?}", e);
-        return Err(StatusCode::UNAUTHORIZED);
-    };
-
-    Ok(())
 }

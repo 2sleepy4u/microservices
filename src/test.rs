@@ -1,9 +1,27 @@
+#[test] 
+fn test_credentials_validation() {
+    use crate::token::*;
+
+    let email = "test@gmail.com".to_string();
+    let password = "Secretpassword123!".to_string();
+    let credentials = Credentials::new(email, password);
+
+    assert!(credentials.validate_email());
+    assert!(credentials.validate_password());
+
+    let email = "not an email".to_string();
+    let password = "weak ".to_string();
+    let credentials = Credentials::new(email, password);
+ 
+    assert!(!credentials.validate_email());
+    assert!(!credentials.validate_password());
+}
+
 #[test]
 fn test_token_creation() {
     use crate::token::*;
 
     let email = "test@gmail.com".to_string();
-    let password = "secretpassword123!".to_string();
     let duration_hours = 1;
     //let credentials = Credentials::new(email.clone(), password);
     let pub_key = include_bytes!("../keys/pubkey.pem");

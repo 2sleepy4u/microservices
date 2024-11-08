@@ -7,7 +7,10 @@ use rand::{distributions::Alphanumeric, Rng};
 use sha2::{Sha512, Digest};
 use tracing::debug;
 
+use utoipa::ToSchema;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(ToSchema)]
 pub struct Credentials {
     pub email: String,
     pub password: String
@@ -23,10 +26,29 @@ impl Credentials {
         Self { email, password }
     }
 
-    pub async fn register(&self, db: &MySqlPool) -> Result<(), CredentialsError> {
-        let result = self.get_user(db).await;
+    pub fn validate_email(&self) -> bool {
+        regex::Regex::new(r"^([a-z0-9_+]([a-z0-9_+.]*[a-z0-9_+])?)@([a-z0-9]+([\-\.]{1}[a-z0-9]+)*\.[a-z]{2,6})")
+            .is_ok_and(|x| x.is_match(&self.email))
+    }
 
-        match result {
+    pub fn validate_password(&self) -> bool {
+        let mut has_whitespace = false;
+        let mut has_upper = false;
+        let mut has_lower = false;
+        let mut has_digit = false;
+
+        for c in self.password.chars() {
+            has_whitespace |= c.is_whitespace();
+            has_lower |= c.is_lowercase();
+            has_upper |= c.is_uppercase();
+            has_digit |= c.is_digit(10);
+        }
+
+        !has_whitespace && has_upper && has_lower && has_digit && self.password.len() >= 8
+    }
+
+    pub async fn register(&self, db: &MySqlPool) -> Result<(), CredentialsError> {
+        match self.get_user(db).await {
             Ok(res) => if res.is_some() { return Err(CredentialsError::AlreadyExists) },
             Err(e) => panic!("Unknown error! {}", e)
         }
