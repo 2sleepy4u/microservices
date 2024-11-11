@@ -1,2 +1,4 @@
 target
 mysql
+log-debug.json
+

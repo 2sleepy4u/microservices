@@ -2,7 +2,7 @@ use std::sync::Arc;
 use tracing::{info, warn, error};
 use axum::{
     Json,
-    extract::{Request, State},
+    extract::{Request, State, Host},
     http::{header::{self}, StatusCode}, middleware::Next
 };
 
@@ -49,9 +49,14 @@ pub async fn is_auth(
         (status = NOT_ACCEPTABLE, description = "Not valid email"),
         (status = NOT_ACCEPTABLE, description = "Not valid password")
         ),
+    request_body = Credentials,
+    params(
+        ("Authorization" = String, Header, description = "Authentication token"),
+    ),
         )]
 pub async fn register(
     state: State<Arc<ServiceState>>,
+    Host(audience): Host,
     Json(credentials): Json<Credentials>
 ) -> Result<(), StatusCode> 
 {
@@ -65,7 +70,7 @@ pub async fn register(
         return Err(StatusCode::NOT_ACCEPTABLE);
     }
 
-    if let Err(e) = credentials.register(&state.pool).await {
+    if let Err(e) = credentials.register(audience, &state.pool).await {
         warn!("{:?}", e);
         return Err(StatusCode::INTERNAL_SERVER_ERROR);
     }
@@ -80,18 +85,22 @@ pub async fn register(
         (status = 200, description = "User successfully logged. Token is retrived.", body = Credentials),
         (status = UNAUTHORIZED, description = ""),
         ),
+    request_body = Credentials
         )]
 pub async fn login(
     state: State<Arc<ServiceState>>,
+    Host(audience): Host,
     Json(credentials): Json<Credentials>
 ) -> Result<String, StatusCode> 
 {
-    match credentials.get_user(&state.pool).await {
-        Ok(res) if res.is_some() => {
-            return state.token_generator.token(credentials.email, state.config.token_duration)
+    let auth_service = state.config.ip.to_string();
+    match credentials.get_user(audience.clone(), &state.pool).await {
+        Ok(Some(user)) => {
+            let payload = Payload::new(state.config.token_duration, user.email, auth_service, audience, user.role);
+            return state.token_generator.token(payload)
                 .or(Err(StatusCode::INTERNAL_SERVER_ERROR));
         },
-        Ok(_)=> return Err(StatusCode::UNAUTHORIZED),
+        Ok(None)=> return Err(StatusCode::UNAUTHORIZED),
         Err(e) => {
             error!("{}", e);
             return Err(StatusCode::INTERNAL_SERVER_ERROR);
@@ -116,7 +125,10 @@ pub async fn ping() -> String {
     responses(
         (status = 200, description = "The token is valid"),
         ),
-        )]
+    params(
+        ("Authorization" = String, Header, description = "Authentication token"),
+    ),
+)]
 pub async fn verify(
     state: State<Arc<ServiceState>>,
     req: Request

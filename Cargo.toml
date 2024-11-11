@@ -6,6 +6,7 @@ edition = "2021"
 
 [dependencies]
 axum = "0.7.7"
+base64 = "0.22.1"
 chrono = "0.4.38"
 dotenv = "0.15.0"
 http-body-util = "0.1.2"

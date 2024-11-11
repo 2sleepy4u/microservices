@@ -5,8 +5,8 @@ use chrono::prelude::*;
 use sqlx::MySqlPool;
 use rand::{distributions::Alphanumeric, Rng};
 use sha2::{Sha512, Digest};
-use tracing::debug;
 
+use tracing::debug;
 use utoipa::ToSchema;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -19,6 +19,13 @@ pub struct Credentials {
 #[derive(Debug, Clone)]
 pub enum CredentialsError {
     AlreadyExists
+}
+
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct User {
+    pub email: String,
+    pub role: String
 }
 
 impl Credentials {
@@ -47,8 +54,8 @@ impl Credentials {
         !has_whitespace && has_upper && has_lower && has_digit && self.password.len() >= 8
     }
 
-    pub async fn register(&self, db: &MySqlPool) -> Result<(), CredentialsError> {
-        match self.get_user(db).await {
+    pub async fn register(&self, aud: String, db: &MySqlPool) -> Result<(), CredentialsError> {
+        match self.get_user(aud, db).await {
             Ok(res) => if res.is_some() { return Err(CredentialsError::AlreadyExists) },
             Err(e) => panic!("Unknown error! {}", e)
         }
@@ -79,11 +86,25 @@ impl Credentials {
         password_digest
     }
 
-    pub async fn get_user(&self, db: &MySqlPool) -> Result<Option<Credentials>, sqlx::Error> {
+    pub async fn get_user(&self, aud: String, db: &MySqlPool) -> Result<Option<User>, sqlx::Error> {
+        debug!("{}", &aud);
         sqlx::query_as!(
-            Credentials,
-            "SELECT email, password_digest as password FROM Users WHERE email = ?", 
-            &self.email
+            User,
+            "
+                SELECT
+                    Users.email,
+                    Permissions.name as role
+                FROM
+                    Users INNER JOIN 
+                    UsersPermissions ON Users.id = UsersPermissions.user_id INNER JOIN
+                    Permissions ON Permissions.id = UsersPermissions.permission_id
+                WHERE
+                    Users.active = true AND
+                    Users.email = ? AND
+                    Permissions.audience = ?
+            ",
+            &self.email,
+            &aud
             )
             .fetch_optional(db)
             .await
@@ -109,14 +130,8 @@ impl TokenGenerator {
         let pub_key = DecodingKey::from_rsa_pem(pub_key)?;
         Ok(Self { priv_key, pub_key })
     }
-    pub fn token(&self, sub: String, duration: u32) -> Result<String, Error> {
-        let utc: DateTime<Utc> = Utc::now(); 
-        let hours = utc.hour() + duration;
-        let exp = utc.with_hour(hours)
-            .expect("Error setting exp timestamp")
-            .timestamp() as usize;
 
-        let payload = Payload { sub, exp };
+    pub fn token(&self, payload: Payload) -> Result<String, Error> {
         let token = encode(&Header::new(Algorithm::RS256), &payload, &self.priv_key)?;
         Ok(token)
     }
@@ -130,12 +145,26 @@ impl TokenGenerator {
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Payload {
+    role: String,
     //the user
     sub: String,
     //expiration
     exp: usize,
     //from what auth service
-    //iss: String, 
+    iss: String, 
     //for what service
-    //aud: String 
+    aud: String 
+}
+
+impl Payload  {
+    pub fn new(duration: u32, sub: String, iss: String, aud: String, role: String) -> Self {
+        let utc: DateTime<Utc> = Utc::now(); 
+        let hours = utc.hour() + duration;
+        let exp = utc.with_hour(hours)
+            .expect("Error setting exp timestamp")
+            .timestamp() as usize;
+
+
+        Self { sub, iss, aud, exp, role}
+    }
 }

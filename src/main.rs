@@ -57,13 +57,8 @@ async fn main() {
     let config: Config = Config::load_from_env();
 
     let address = format!("{}:{}", config.ip, config.port);
-    let pub_key = std::fs::read_to_string("keys/pubkey.pem")
-        .expect("Error loading public key file");
-    let priv_key = std::fs::read_to_string("keys/privkey.pem")
-        .expect("Error loading public key file");
-
-    let pub_key = pub_key.as_bytes();
-    let priv_key = priv_key.as_bytes();
+    let pub_key = config.pub_key.as_bytes();
+    let priv_key = config.priv_key.as_bytes();
 
     let url = config.db_string.clone();
 
@@ -82,8 +77,8 @@ async fn main() {
     let app = Router::new()
         .route("/register", post(routes::register))
         //protects above endpoints with token login
-        .layer(middleware::from_fn_with_state(state.clone(), routes::is_auth))
-              .route("/ping", get(routes::ping))
+        //.layer(middleware::from_fn_with_state(state.clone(), routes::is_auth))
+        //      .route("/ping", get(routes::ping))
         .route("/verify", post(routes::verify))
         .route("/login", post(routes::login))
         .with_state(state)
