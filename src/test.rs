@@ -1,3 +1,5 @@
+use dotenv::dotenv;
+
 #[test] 
 fn test_credentials_validation() {
     use crate::token::*;
@@ -19,17 +21,21 @@ fn test_credentials_validation() {
 
 #[test]
 fn test_token_creation() {
+    use crate::state::*;
     use crate::token::*;
 
-    let email = "test@gmail.com".to_string();
+    let email = "test@newspaper.com".to_string();
     let duration_hours = 1;
     //let credentials = Credentials::new(email.clone(), password);
-    let pub_key = include_bytes!("../keys/pubkey.pem");
-    let priv_key = include_bytes!("../keys/privkey.pem");
+    dotenv::dotenv().ok();
+    let config: Config = Config::load_from_env();
+    let pub_key = config.pub_key.as_bytes();
+    let priv_key = config.priv_key.as_bytes();
 
     //generate keys at startup to save resource in runtime
     let token_generator = TokenGenerator::new(pub_key, priv_key).unwrap();
-    let token = token_generator.token(email, duration_hours);
+    let payload = Payload::new(duration_hours, email, config.ip.to_string(), config.ip, "TestUser".to_string());
+    let token = token_generator.token(payload);
 
     assert!(token.is_ok());
 
@@ -41,10 +47,12 @@ fn test_token_creation() {
 #[tokio::test]
 async fn test_register_user() {
     use crate::token::*;
+    use crate::state::*;
     use sqlx::mysql::MySqlPoolOptions;
 
     dotenv::dotenv().ok();
-    let url = std::env::var("DATABASE_URL").expect("Connection string not found");
+    let config: Config = Config::load_from_env();
+    let url = config.db_string;
 
 
     let pool = MySqlPoolOptions::new()
@@ -59,6 +67,6 @@ async fn test_register_user() {
     let password = "secretpassword123!".to_string();
     let credentials = Credentials::new(email.clone(), password);
 
-    let res = credentials.register(&pool).await;
+    let res = credentials.register(config.ip, &pool).await;
     assert!(true);
 }

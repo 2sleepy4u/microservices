@@ -16,7 +16,6 @@ CREATE TABLE Users (
 CREATE TABLE Permissions (
 	id INT NOT NULL AUTO_INCREMENT,
 	name VARCHAR(20) NOT NULL,
-	--the targeted app
 	audience TINYTEXT NOT NULL,
 	description TINYTEXT,
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,

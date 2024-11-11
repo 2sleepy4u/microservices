@@ -93,7 +93,7 @@ pub async fn login(
     Json(credentials): Json<Credentials>
 ) -> Result<String, StatusCode> 
 {
-    let auth_service = state.config.ip.to_string();
+    let auth_service = state.config.ip.clone();
     match credentials.get_user(audience.clone(), &state.pool).await {
         Ok(Some(user)) => {
             let payload = Payload::new(state.config.token_duration, user.email, auth_service, audience, user.role);
