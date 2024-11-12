@@ -1,5 +1,6 @@
 use std::{fs::Permissions, sync::Arc};
-use tracing::{info, warn, error};
+use serde::Serialize;
+use tracing::{debug, error, info, warn};
 use axum::{
     Json,
     extract::{Request, State, Host},
@@ -14,7 +15,9 @@ use crate::state::*;
 
 
 #[derive(OpenApi)]
-#[openapi(paths(register, login, verify, assign_role, create_role, ping))]
+#[openapi(
+    modifiers(&Authorize),
+    paths(register, login, verify, assign_role, create_role, ping))]
 pub struct ApiDoc;
 
 
@@ -28,9 +31,10 @@ pub async fn is_auth(
     let auth_header = req.headers()
         .get(header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .ok_or(StatusCode::UNAUTHORIZED)?
+        .replace("Bearer ", "");
 
-    if let Err(e) = state.token_generator.verify(auth_header) {
+    if let Err(e) = state.token_generator.verify(&auth_header) {
         warn!("{:?}", e);
         return Err(StatusCode::UNAUTHORIZED);
     };
@@ -39,6 +43,27 @@ pub async fn is_auth(
 
 
     Ok(response)
+}
+use utoipa::openapi;
+use utoipa::openapi::security::*;
+use utoipa::Modify;
+#[derive(Debug, Serialize)]
+struct Authorize;
+
+impl Modify for Authorize {
+    fn modify(&self, openapi: &mut openapi::OpenApi) {
+        if let Some(schema) = openapi.components.as_mut() {
+            schema.add_security_scheme(
+                "Token",
+                SecurityScheme::Http(
+                    HttpBuilder::new()
+                        .scheme(HttpAuthScheme::Bearer)
+                        .bearer_format("JWT")
+                        .build(),
+                ),
+            );
+        }
+    }
 }
 
 
@@ -50,12 +75,10 @@ pub async fn is_auth(
         (status = INTERNAL_SERVER_ERROR, description = "Error in update or insert"),
         ),
     request_body = User,
-    params(
-        ("Authorization" = String, Header, description = "Authentication token"),
+    security(
+        ("Token"= [])
     ),
-        )]
-
-
+)]
 pub async fn assign_role(
     state: State<Arc<ServiceState>>,
     Host(audience): Host,
@@ -88,10 +111,11 @@ pub async fn assign_role(
         (status = EXPECTATION_FAILED, description = "This role already exists"),
         ),
     request_body = Permission,
-    params(
-        ("Authorization" = String, Header, description = "Authentication token"),
+    security(
+        ("Token"= [])
     ),
-        )]
+
+)]
 
 pub async fn create_role(
     state: State<Arc<ServiceState>>,
@@ -120,10 +144,10 @@ pub async fn create_role(
         (status = NOT_ACCEPTABLE, description = "Not valid password")
         ),
     request_body = Credentials,
-    params(
-        ("Authorization" = String, Header, description = "Authentication token"),
+    security(
+        ("Token"= [])
     ),
-        )]
+)]
 pub async fn register(
     state: State<Arc<ServiceState>>,
     Host(audience): Host,
@@ -156,7 +180,7 @@ pub async fn register(
         (status = UNAUTHORIZED, description = ""),
         ),
     request_body = Credentials
-        )]
+)]
 pub async fn login(
     state: State<Arc<ServiceState>>,
     Host(audience): Host,
@@ -183,8 +207,8 @@ pub async fn login(
     path = "/ping",
     responses(
         (status = 200, description = "Pong"),
-        ),
-        )]
+    ),
+)]
 pub async fn ping() -> String {
     "pong".to_string()
 }
@@ -195,8 +219,8 @@ pub async fn ping() -> String {
     responses(
         (status = 200, description = "The token is valid"),
         ),
-    params(
-        ("Authorization" = String, Header, description = "Authentication token"),
+    security(
+        ("Token"= [])
     ),
 )]
 pub async fn verify(
@@ -207,9 +231,10 @@ pub async fn verify(
     let auth_header = req.headers()
         .get(header::AUTHORIZATION)
         .and_then(|header| header.to_str().ok())
-        .ok_or(StatusCode::UNAUTHORIZED)?;
+        .ok_or(StatusCode::UNAUTHORIZED)?
+        .replace("Bearer ", "");
 
-    if let Err(e) = state.token_generator.verify(auth_header) {
+    if let Err(e) = state.token_generator.verify(&auth_header) {
         warn!("{:?}", e);
         return Err(StatusCode::UNAUTHORIZED);
     };

@@ -210,7 +210,9 @@ impl TokenGenerator {
     }
 
     pub fn verify(&self, token: &str) -> Result<Payload, Error> {
-        let token = decode::<Payload>(&token, &self.pub_key, &Validation::new(Algorithm::RS256))?;
+        let mut validation = Validation::new(Algorithm::RS256);
+        validation.validate_aud = false;
+        let token = decode::<Payload>(&token, &self.pub_key, &validation)?;
         Ok(token.claims)
     }
 }

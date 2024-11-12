@@ -18,13 +18,14 @@ outputs = { self, nixpkgs, flake-utils }:
 			  pkgs.openssl
           ];
           shellHook = ''
-			openssl genrsa -out priv.pem 4096
+			openssl genrsa -out priv.pem 2048
 			openssl rsa -in priv.pem -pubout -out pub.pem
 			export PRIV_KEY="$(base64 priv.pem --wrap=0)"
 			export PUB_KEY="$(base64 pub.pem --wrap=0)"
 			rm priv.pem
-			mkdir keys
-			mv pub.pem keys/pub.pem 
+			rm pub.pem
+			#mkdir keys
+			#mv pub.pem keys/pub.pem 
 
             MYSQL_BASEDIR=${pkgs.mariadb}
             MYSQL_HOME="$PWD/mysql"
