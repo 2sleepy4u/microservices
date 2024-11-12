@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{fs::Permissions, sync::Arc};
 use tracing::{info, warn, error};
 use axum::{
     Json,
@@ -8,13 +8,13 @@ use axum::{
 
 use utoipa::OpenApi;
 
-use crate::token::*;
+use crate::{token::*, Permission};
 use crate::state::*;
 
 
 
 #[derive(OpenApi)]
-#[openapi(paths(register, login, verify, ping))]
+#[openapi(paths(register, login, verify, assign_role, create_role, ping))]
 pub struct ApiDoc;
 
 
@@ -39,6 +39,76 @@ pub async fn is_auth(
 
 
     Ok(response)
+}
+
+
+#[utoipa::path(
+    post,
+    path = "/assign_role",
+    responses(
+        (status = 200, description = "Role assigned successfully", body = User),
+        (status = INTERNAL_SERVER_ERROR, description = "Error in update or insert"),
+        ),
+    request_body = User,
+    params(
+        ("Authorization" = String, Header, description = "Authentication token"),
+    ),
+        )]
+
+
+pub async fn assign_role(
+    state: State<Arc<ServiceState>>,
+    Host(audience): Host,
+    Json(user): Json<User>
+) -> Result<(), StatusCode> 
+{
+    if user.get_user(&audience, &state.pool)
+        .await
+        .is_ok_and(|x| x.is_some()) 
+    {
+        if let Err(e) = user.update(&audience, &state.pool).await {
+            error!("{}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    } else {
+        if let Err(e) = user.insert(&audience, &state.pool).await {
+            error!("{}", e);
+            return Err(StatusCode::INTERNAL_SERVER_ERROR);
+        }
+    }
+    Ok(())
+}
+
+
+#[utoipa::path(
+    post,
+    path = "/create_role",
+    responses(
+        (status = 200, description = "Role created successfully", body = Permission),
+        (status = EXPECTATION_FAILED, description = "This role already exists"),
+        ),
+    request_body = Permission,
+    params(
+        ("Authorization" = String, Header, description = "Authentication token"),
+    ),
+        )]
+
+pub async fn create_role(
+    state: State<Arc<ServiceState>>,
+    Json(permission): Json<Permission>
+) -> Result<(), StatusCode> 
+{
+    if permission.exists(&state.pool).await {
+        warn!("This role already exists: {}", permission.name);
+        return Err(StatusCode::EXPECTATION_FAILED);
+    } 
+
+    if let Err(e) = permission.insert(&state.pool).await {
+        error!("{}", e);
+        return Err(StatusCode::INTERNAL_SERVER_ERROR);
+    }
+
+    Ok(())
 }
 
 #[utoipa::path(

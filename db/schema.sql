@@ -20,6 +20,7 @@ CREATE TABLE Permissions (
 	description TINYTEXT,
 	created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 	updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+	CONSTRAINT AvoidDuplicate UNIQUE (name, audience),
 	PRIMARY KEY (id)
 );
 

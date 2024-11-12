@@ -9,6 +9,8 @@ use sha2::{Sha512, Digest};
 use tracing::debug;
 use utoipa::ToSchema;
 
+use crate::OptionLogError;
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[derive(ToSchema)]
 pub struct Credentials {
@@ -23,9 +25,80 @@ pub enum CredentialsError {
 
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(ToSchema)]
 pub struct User {
     pub email: String,
     pub role: String
+}
+
+impl User {
+    pub async fn insert(&self, aud: &str, db: &MySqlPool) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "
+                INSERT INTO UsersPermissions 
+                    (user_id, permission_id) 
+                SELECT 
+                    Users.id, Permissions.id 
+                FROM
+                    Users INNER JOIN 
+                    UsersPermissions ON Users.id = UsersPermissions.user_id INNER JOIN
+                    Permissions ON Permissions.id = UsersPermissions.permission_id
+                WHERE
+                    Users.email = ? AND
+                    Permissions.audience = ?
+                   
+            ",
+            &self.email,
+            &aud
+            )
+            .fetch_optional(db)
+            .await
+            .and_then(|_| Ok(()))
+
+    }
+    pub async fn update(&self, aud: &str, db: &MySqlPool) -> Result<(), sqlx::Error> {
+        sqlx::query!(
+            "
+                UPDATE 
+                    UsersPermissions INNER JOIN
+                    Users ON Users.id = UsersPermissions.user_id INNER JOIN
+                    Permissions ON Permissions.id = UsersPermissions.permission_id
+                SET 
+                    user_id = Users.id, 
+                    permission_id = Permissions.id
+                WHERE
+                    Users.email = ? AND
+                    Permissions.audience = ?
+            ",
+            &self.email,
+            &aud
+            )
+            .fetch_optional(db)
+            .await
+            .and_then(|_| Ok(()))
+    }
+    pub async fn get_user(&self, aud: &str, db: &MySqlPool) -> Result<Option<User>, sqlx::Error> {
+        sqlx::query_as!(
+            User,
+            "
+                SELECT
+                    Users.email,
+                    Permissions.name as role
+                FROM
+                    Users INNER JOIN 
+                    UsersPermissions ON Users.id = UsersPermissions.user_id INNER JOIN
+                    Permissions ON Permissions.id = UsersPermissions.permission_id
+                WHERE
+                    Users.email = ? AND
+                    Permissions.audience = ?
+            ",
+            &self.email,
+            &aud
+            )
+            .fetch_optional(db)
+            .await
+    }
+    
 }
 
 impl Credentials {
@@ -161,7 +234,7 @@ impl Payload  {
         let utc: DateTime<Utc> = Utc::now(); 
         let hours = utc.hour() + duration;
         let exp = utc.with_hour(hours)
-            .expect("Error setting exp timestamp")
+            .expect_and_log("Error setting exp timestamp")
             .timestamp() as usize;
 
 

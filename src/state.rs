@@ -1,12 +1,12 @@
 use sqlx::MySqlPool;
 use serde::{Serialize, Deserialize};
-use base64::prelude::*;
+use tracing::debug;
 
-pub const DEFAULT_TOKEN_DURATION_HOURS: usize = 1;
+pub const DEFAULT_TOKEN_DURATION_HOURS: u8 = 1;
 pub const DEFAULT_IP: &str = "0.0.0.0";
 pub const DEFAULT_PORT: u16 = 3000;
 
-use crate::token::*;
+use crate::{token::*, ResultLogError};
 
 #[derive(Serialize, Deserialize)]
 pub struct Config {
@@ -18,10 +18,12 @@ pub struct Config {
     pub priv_key: String
 }
 
+
+
 impl Config {
     pub fn load_from_env() -> Self {
         let db_string = std::env::var("DATABASE_URL")
-            .expect("Connection string not found");
+            .expect_and_log("Connection string not found");
         let ip = std::env::var("IP")
             .unwrap_or(DEFAULT_IP.to_string());
         let token_duration = std::env::var("TOKEN_DURATION")
@@ -33,9 +35,9 @@ impl Config {
             .parse::<u16>()
             .unwrap();
         let pub_key = std::env::var("PUB_KEY")
-            .expect("No Public Key found");
+            .expect_and_log("No Public Key found");
         let priv_key = std::env::var("PRIV_KEY")
-            .expect("No Private Key found");
+            .expect_and_log("No Private Key found");
         let pub_key = String::from_utf8(base64::decode(&pub_key).unwrap()).unwrap();
         let priv_key = String::from_utf8(base64::decode(&priv_key).unwrap()).unwrap();
 

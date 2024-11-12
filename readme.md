@@ -11,6 +11,17 @@ More documentation about the endpoints can be found in the OpenAPI .json or usin
 
 ## How it works?
 
+
+### Env var
+
+    DATABASE_URL=[connection string to db]
+    IP=[ip]
+    PORT=[port]
+    TOKEN_DURATION=[token duration in hours]
+    PRIV_KEY=[pem format private key base64 encoded]
+    PUB_KEY=[pem format public key base64 encoded]
+
+
 ### Token
 
 Token is signed with private key only available to this service.  
@@ -22,6 +33,3 @@ Authorization is centralized within this service. This service uses a role based
 Inside **Permission** table, roles are created, assigned then within the **UsersPermissions** table.  
 It will be the targeted app responsability to map the roles to actual authorization logic.  
 
-
-## TODO
-SSL/TLS?
